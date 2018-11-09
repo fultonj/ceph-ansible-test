@@ -3,17 +3,18 @@
   vars:
     overcloud_nodes: 1
     cpu: 4
+    source: centos
   tasks:
-    - name: check that centos vm exists to clone
-      command: "virsh dumpxml centos"
-      register: get_centos_vm
+    - name: check that source vm exists to clone
+      command: "virsh dumpxml {{ source }}"
+      register: get_source_vm
       ignore_errors: yes
       become: true
       tags: clone
-    - name: fail if there is not centos VM to clone
+    - name: fail if there is not {{ source }} VM to clone
       fail:
-        msg="No cenots, see https://github.com/fultonj/tripleo-laptop/blob/master/centos.sh"
-      when: get_centos_vm.rc > 0
+        msg="No {{ source }}, see https://github.com/fultonj/tripleo-laptop/blob/master/centos.sh"
+      when: get_source_vm.rc > 0
       tags: clone
     - name: download latest clone script
       get_url:
@@ -23,7 +24,7 @@
         force: true
       tags: clone
     - name: clone overcloud virtual machines
-      shell: "bash {{ ansible_user_dir }}/clone.sh overcloud {{ overcloud_nodes }} {{ cpu }}"
+      shell: "bash {{ ansible_user_dir }}/clone.sh overcloud {{ overcloud_nodes }} {{ cpu }} {{ source }}"
       tags: clone
 - hosts: ceph
   vars:
