@@ -1,0 +1,141 @@
+---
+- hosts: localhost
+  vars:
+    overcloud_nodes: 1
+    cpu: 4
+  tasks:
+    - name: check that centos vm exists to clone
+      command: "virsh dumpxml centos"
+      register: get_centos_vm
+      ignore_errors: yes
+      become: true
+      tags: clone
+    - name: fail if there is not centos VM to clone
+      fail:
+        msg="No cenots, see https://github.com/fultonj/tripleo-laptop/blob/master/centos.sh"
+      when: get_centos_vm.rc > 0
+      tags: clone
+    - name: download latest clone script
+      get_url:
+        url: https://raw.githubusercontent.com/fultonj/tripleo-laptop/master/clone.sh
+        dest: "{{ ansible_user_dir }}/clone.sh"
+        mode: 0755
+        force: true
+      tags: clone
+    - name: clone overcloud virtual machines
+      shell: "bash {{ ansible_user_dir }}/clone.sh overcloud {{ overcloud_nodes }} {{ cpu }}"
+      tags: clone
+- hosts: ceph
+  vars:
+    ssh_git_checkout: 0
+    container_cli: "podman"
+    account: "ceph"
+    repo: "ceph-ansible"
+    branch: "podman-support"
+  tasks:
+    - name: install packages
+      yum:
+        name: "{{ item }}"
+        state: latest
+      with_items:
+        - tmux
+        - emacs-nox
+        - vim
+        - git
+        - gdisk
+        - util-linux
+        - python-netaddr
+        - http://cbs.centos.org/kojifiles/packages/python-notario/0.0.13/1.el7/noarch/python2-notario-0.0.13-1.el7.noarch.rpm
+        - http://cbs.centos.org/kojifiles/packages/ansible/2.6.6/1.el7.ans/noarch/ansible-2.6.6-1.el7.ans.noarch.rpm
+        - "{{ container_cli }}"
+    - name: write new eth0 config
+      copy:
+        dest: /etc/sysconfig/network-scripts/ifcfg-eth0
+        force: true
+        content: |
+          DEVICE=eth0
+          BOOTPROTO=static
+          ONBOOT=yes
+          TYPE=Ethernet
+          IPADDR={{ item.ip4 }}
+          PREFIX={{ item.prefix }}
+      when: "'{{ inventory_hostname }}' == '{{ item.host }}'"
+      with_items:
+        - { host: 'overcloud0', ip4: '192.168.24.2', prefix: '24' }
+        - { host: 'overcloud1', ip4: '192.168.24.7', prefix: '24' }
+        - { host: 'overcloud2', ip4: '192.168.24.8', prefix: '24' }
+    - name: bring up eth0
+      command: "ifup eth0"
+    - name: update /etc/hosts
+      copy:
+        dest: /etc/hosts
+        force: yes
+        group: root
+        owner: root
+        mode: 0644
+        content: |
+          127.0.0.1   localhost localhost.localdomain localhost4 localhost4.localdomain4
+          ::1         localhost localhost.localdomain localhost6 localhost6.localdomain6
+          192.168.24.2    overcloud0.example.com        overcloud0
+          192.168.24.7    overcloud1.example.com        overcloud1
+          192.168.24.8    overcloud2.example.com        overcloud2
+    - name: copy vdisk script
+      copy:
+        dest: /root/vdisk.sh
+        force: yes
+        group: root
+        owner: root
+        mode: 0755
+        content: |
+          if [[ ! -e /dev/loop3 ]]; then
+              dd if=/dev/zero of=/var/lib/ceph-osd.img bs=1 count=0 seek=7G
+              losetup /dev/loop3 /var/lib/ceph-osd.img
+          fi
+          sgdisk -Z /dev/loop3
+          lsblk
+      tags: disk
+    - name: execute vdisk.sh on remote servers
+      shell: "bash /root/vdisk.sh"
+      ignore_errors: true
+      tags: disk
+    - name: upload test_files to ceph nodes
+      synchronize:
+        mode: push
+        dest: /root/
+        src: "{{ lookup('env', 'PWD') }}/test_files"
+      tags: push
+    - name: copy git clone shell script
+      copy:
+        dest: /root/bootstrap.sh
+        force: yes
+        group: root
+        owner: root
+        mode: 0755
+        content: |
+          export SSH_GIT_CHECKOUT={{ ssh_git_checkout }}
+          if [[ $SSH_GIT_CHECKOUT -eq 1 ]]; then
+            ssh-keyscan github.com >> ~/.ssh/known_hosts
+            git clone -b {{ branch }} git@github.com:/{{ account }}/{{ repo }}.git
+          else
+            git clone -b {{ branch }} https://github.com/{{ account }}/{{ repo }}.git
+          fi
+          export CONTAINER_CLI={{ container_cli }}
+          if [[ $CONTAINER_CLI == "docker" ]]; then
+            echo 'is_podman: false' >> test_files/all.yml
+          else
+            echo 'is_podman: true' >> test_files/all.yml
+          fi
+          if [[ -d {{ repo }} ]]; then
+            cp test_files/inventory.yml {{ repo }}/
+            cp test_files/all.yml {{ repo }}/group_vars/
+            cp test_files/mons.yml {{ repo }}/group_vars/
+          fi
+          # ugly workaround
+          FILE={{ repo }}/roles/ceph-validate/tasks/main.yml
+          sed -i -e '/validate:/d' -e '/mode:\ strict/d' -e '/validate\ provided\ configuration/d' $FILE
+      tags: script
+    - name: execute bootstrap.sh on remote servers (not doing ssh_git_checkout)
+      shell: "bash /root/bootstrap.sh"
+      ignore_errors: true
+      when: "{{ ssh_git_checkout }} == 0"
+      tags: bootstrap
