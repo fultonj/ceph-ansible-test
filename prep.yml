@@ -3,7 +3,7 @@
   vars:
     overcloud_nodes: 1
     cpu: 4
-    source: centos
+    source: fedora28
   tasks:
     - name: check that source vm exists to clone
       command: "virsh dumpxml {{ source }}"
@@ -32,10 +32,11 @@
     container_cli: "podman"
     account: "ceph"
     repo: "ceph-ansible"
-    branch: "podman-support"
+    #branch: "podman-support"
+    branch: "master"
   tasks:
     - name: install packages
-      yum:
+      dnf:
         name: "{{ item }}"
         state: latest
       with_items:
@@ -48,6 +49,7 @@
         - python-netaddr
         - http://cbs.centos.org/kojifiles/packages/python-notario/0.0.13/1.el7/noarch/python2-notario-0.0.13-1.el7.noarch.rpm
         - http://cbs.centos.org/kojifiles/packages/ansible/2.6.6/1.el7.ans/noarch/ansible-2.6.6-1.el7.ans.noarch.rpm
+        - libselinux-python
         - "{{ container_cli }}"
     - name: write new eth0 config
       copy:
@@ -121,11 +123,6 @@
             git clone -b {{ branch }} https://github.com/{{ account }}/{{ repo }}.git
           fi
           export CONTAINER_CLI={{ container_cli }}
-          if [[ $CONTAINER_CLI == "docker" ]]; then
-            echo 'is_podman: false' >> test_files/all.yml
-          else
-            echo 'is_podman: true' >> test_files/all.yml
-          fi
           if [[ -d {{ repo }} ]]; then
             cp test_files/inventory.yml {{ repo }}/
             cp test_files/all.yml {{ repo }}/group_vars/
