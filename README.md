@@ -107,3 +107,7 @@ total 16
 
 Good to see podman progress, I'm more worried about getting it working
 on f28 than then f29atomic issues I'm seeing.
+
+Next steps:
+- Try again with v3.2.1-stable-3.2-luminous-centos-7-x86_64
+- [Update params based on ceph-ansible CI](https://github.com/ceph/ceph-ansible/tree/master/tests/functional/fedora/29/container-podman/group_vars)
